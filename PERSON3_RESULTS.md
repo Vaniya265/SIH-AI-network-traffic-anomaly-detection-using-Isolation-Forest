@@ -27,3 +27,14 @@ Hidden Attack (neptune, unseen in training) → ANOMALY 🚨 (100%)
 - Testing scripts: `my_test_data.py`, `test_model.py`, `demo_sequence.py`, `tune_threshold.py`
 - Final threshold to use in backend: **0.0**
 - Person 3's evaluation setup is COMPLETE — ready for Person 4 validation and Person 5 API integration.
+## Known Limitation
+
+Model high-volume/aggressive attacks reliably catch karta hai (hidden attack 
+"neptune": 100%). Lekin 2 known attacks miss hue — `nmap` (port scan) aur 
+`warezclient` (file-sharing traffic) — kyunki inka traffic pattern normal 
+browsing se kaafi milta-julta hai (low volume, quiet).
+
+Threshold tuning se ye fix nahi hota — sirf normal traffic ka false alarm 
+badhta hai without improving detection of these specific types. Ye ek known 
+challenge hai anomaly-detection systems mein, future iterations mein additional 
+feature engineering se improve ho sakta hai.
