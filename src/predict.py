@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import joblib
-
+from feature_deviation import FeatureDeviationEngine
 
 # ==========================================
 # LOAD MODEL + PREPROCESSING
@@ -39,6 +39,8 @@ scaler = joblib.load(SCALER_PATH)
 feature_names = joblib.load(FEATURES_PATH)
 
 calibration = joblib.load(CALIBRATION_PATH)
+
+deviation_engine = FeatureDeviationEngine(os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline_stats.json"))
 
 
 # ==========================================
@@ -210,6 +212,7 @@ def predict_one(data):
         risk_score
     )
 
+    reasons = deviation_engine.get_reasons(data, top_n=3)
 
     return {
 
@@ -217,6 +220,8 @@ def predict_one(data):
 
         "risk_score": risk_score,
 
-        "risk_level": risk_level
+        "risk_level": risk_level,
+
+        "reasons": reasons
 
     }
