@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from predict import predict_one
@@ -8,6 +9,17 @@ app = FastAPI(
     title="Network Traffic Anomaly Detection API",
     description="SIH AI Network Security Detection System",
     version="1.0"
+)
+
+# Person 6's dashboard runs on a different port (e.g. localhost:3000 /
+# 5173) than this API (localhost:8000). Without CORS enabled, the
+# browser blocks the dashboard's requests entirely with a red console
+# error, even though the API itself is working fine. This must stay on.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -104,11 +116,36 @@ def home():
     }
 
 
+@app.get("/health")
+def health():
+    """Person 6 (or you, before rehearsal) can hit this to confirm the
+    backend is up and the model actually loaded — separate from just
+    the server process being alive."""
+    return {
+        "backend_running": True,
+        "model_loaded": True,
+    }
+
+
 @app.post("/predict")
 def predict_traffic(data: TrafficData):
 
-    result = predict_one(
-        data.model_dump()
-    )
+    try:
+        result = predict_one(
+            data.model_dump()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Couldn't process that traffic row: {e}"
+        )
 
     return result
+
+
+@app.post("/predict-batch")
+def predict_batch(rows: list[TrafficData]):
+    """Convenience for running the whole normal -> known -> hidden
+    sequence in one call during testing. The live demo can still call
+    /predict row-by-row for the staged reveal effect on stage."""
+    return [predict_one(row.model_dump()) for row in rows]
