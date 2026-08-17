@@ -2,14 +2,22 @@ import os
 import pandas as pd
 import numpy as np
 import joblib
+
 from feature_deviation import FeatureDeviationEngine
 
+
 # ==========================================
-# LOAD MODEL + PREPROCESSING
+# PATHS
 # ==========================================
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_DIR = os.path.join(BASE_DIR, "models")
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
+
+MODEL_DIR = os.path.join(
+    BASE_DIR,
+    "models"
+)
 
 MODEL_PATH = os.path.join(
     MODEL_DIR,
@@ -31,16 +39,33 @@ CALIBRATION_PATH = os.path.join(
     "risk_calibration.pkl"
 )
 
+RF_MODEL_PATH = os.path.join(
+    MODEL_DIR,
+    "random_forest.pkl"
+)
+
+
+# ==========================================
+# LOAD MODELS
+# ==========================================
 
 model = joblib.load(MODEL_PATH)
-
 scaler = joblib.load(SCALER_PATH)
-
 feature_names = joblib.load(FEATURES_PATH)
-
 calibration = joblib.load(CALIBRATION_PATH)
+rf_model = joblib.load(RF_MODEL_PATH)
 
-deviation_engine = FeatureDeviationEngine(os.path.join(os.path.dirname(os.path.abspath(__file__)), "baseline_stats.json"))
+
+# ==========================================
+# FEATURE DEVIATION ENGINE
+# ==========================================
+
+deviation_engine = FeatureDeviationEngine(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "baseline_stats.json"
+    )
+)
 
 
 # ==========================================
@@ -60,7 +85,7 @@ def get_risk_level(score):
 
 
 # ==========================================
-# PREPROCESS
+# PREPROCESS FOR ISOLATION FOREST
 # ==========================================
 
 def preprocess_input(data):
@@ -94,6 +119,33 @@ def preprocess_input(data):
 
 
 # ==========================================
+# PREPROCESS FOR RANDOM FOREST
+# ==========================================
+
+def preprocess_for_rf(data):
+
+    df = pd.DataFrame([data])
+
+    categorical_columns = [
+        "protocol_type",
+        "service",
+        "flag"
+    ]
+
+    df = pd.get_dummies(
+        df,
+        columns=categorical_columns
+    )
+
+    df = df.reindex(
+        columns=rf_model.feature_names_in_,
+        fill_value=0
+    )
+
+    return df
+
+
+# ==========================================
 # CALCULATE RISK SCORE
 # ==========================================
 
@@ -102,18 +154,8 @@ def calculate_risk_score(raw_score):
     p95 = calibration["p95"]
     p99 = calibration["p99"]
 
-    # --------------------------------------
-    # LOW RISK
-    # --------------------------------------
-
     if raw_score <= p95:
-
         return 20.0
-
-
-    # --------------------------------------
-    # MEDIUM RISK
-    # --------------------------------------
 
     elif raw_score <= p99:
 
@@ -126,23 +168,15 @@ def calculate_risk_score(raw_score):
         score = 20 + (ratio * 50)
 
         return round(
-            float(np.clip(score, 20, 70)),
+            float(
+                np.clip(score, 20, 70)
+            ),
             2
         )
 
-
-    # --------------------------------------
-    # HIGH RISK
-    # --------------------------------------
-
     else:
 
-        # Instead of immediately jumping to 100,
-        # use a smooth logarithmic scale.
-
-        excess = (
-            raw_score - p99
-        )
+        excess = raw_score - p99
 
         score = (
             70
@@ -157,9 +191,12 @@ def calculate_risk_score(raw_score):
         )
 
         return round(
-            float(np.clip(score, 70, 100)),
+            float(
+                np.clip(score, 70, 100)
+            ),
             2
         )
+
 
 # ==========================================
 # PREDICT ONE TRAFFIC RECORD
@@ -167,35 +204,17 @@ def calculate_risk_score(raw_score):
 
 def predict_one(data):
 
-    X = preprocess_input(data)
+    # ======================================
+    # ISOLATION FOREST
+    # ======================================
 
+    X_if = preprocess_input(data)
 
-    # --------------------------------------
-    # MODEL PREDICTION
-    # --------------------------------------
+    prediction = model.predict(X_if)[0]
 
-    prediction = model.predict(X)[0]
+    raw_score = -model.decision_function(X_if)[0]
 
-
-    # --------------------------------------
-    # ANOMALY SCORE
-    # --------------------------------------
-
-    raw_score = -model.decision_function(X)[0]
-
-
-    # --------------------------------------
-    # RISK SCORE
-    # --------------------------------------
-
-    risk_score = calculate_risk_score(
-        raw_score
-    )
-
-
-    # --------------------------------------
-    # STATUS
-    # --------------------------------------
+    risk_score = calculate_risk_score(raw_score)
 
     status = (
         "ANOMALY"
@@ -203,25 +222,90 @@ def predict_one(data):
         else "NORMAL"
     )
 
+    risk_level = get_risk_level(risk_score)
 
-    # --------------------------------------
-    # RISK LEVEL
-    # --------------------------------------
 
-    risk_level = get_risk_level(
-        risk_score
+    # ======================================
+    # DEFAULT DETECTION SOURCE
+    # ======================================
+
+    detection_source = (
+        "Isolation Forest"
+        if prediction == -1
+        else "None"
     )
 
-    reasons = deviation_engine.get_reasons(data, top_n=3)
+    rf_prediction = None
+
+
+    # ======================================
+    # RANDOM FOREST SAFETY NET
+    # ======================================
+
+    if prediction == 1:
+
+        X_rf = preprocess_for_rf(data)
+
+        rf_raw_prediction = rf_model.predict(X_rf)[0]
+
+        rf_prediction = (
+            "ATTACK"
+            if rf_raw_prediction == 1
+            else "NORMAL"
+        )
+
+        if rf_raw_prediction == 1:
+
+            status = "ANOMALY"
+
+            risk_score = max(
+                risk_score,
+                70.0
+            )
+
+            risk_level = "HIGH"
+
+            detection_source = (
+                "Random Forest Safety Net"
+            )
+
+
+    # ======================================
+    # WHY FLAGGED
+    # ======================================
+
+    reasons = deviation_engine.get_reasons(
+        data,
+        top_n=3
+    )
+
+
+    # ======================================
+    # FINAL VERDICT
+    # ======================================
+
+    if status == "ANOMALY":
+
+        if risk_score >= 70:
+            verdict = "COMPROMISED"
+        else:
+            verdict = "SUSPICIOUS"
+
+    else:
+
+        verdict = "SAFE"
+
+
+    # ======================================
+    # RETURN RESULT
+    # ======================================
 
     return {
-
         "status": status,
-
+        "verdict": verdict,
         "risk_score": risk_score,
-
         "risk_level": risk_level,
-
+        "detection_source": detection_source,
+        "rf_prediction": rf_prediction,
         "reasons": reasons
-
     }
